@@ -70,6 +70,11 @@
           - "{{ project_dir }}"
       changed_when: true
 
+    - name: Remove existing image archive
+      ansible.builtin.file:
+        path: "{{ image_archive }}"
+        state: absent
+
     - name: Export image to Docker archive
       ansible.builtin.command:
         argv:
