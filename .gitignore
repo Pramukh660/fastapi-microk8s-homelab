@@ -1,0 +1,9 @@
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.tar
+__pycache__/
+.venv/
+venv/
