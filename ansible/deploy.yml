@@ -8,53 +8,101 @@
   vars:
     project_dir: "{{ playbook_dir }}/.."
     image_name: fastapi-homelab
-    image_tag: "{{ lookup('pipe', 'git -C ' ~ playbook_dir ~ '/.. rev-parse --short=7 HEAD') }}"
-    image_archive: /tmp/fastapi-homelab.tar
+    image_tag: "{{ lookup('pipe', 'git -C ' ~ (playbook_dir ~ '/..') ~ ' rev-parse --short=7 HEAD') }}"
+    image_archive: "/tmp/{{ image_name }}-{{ image_tag }}.tar"
+    rendered_manifest: /tmp/fastapi-deployment.yaml
 
   tasks:
-    - name: Build FastAPI image on Ansible control machine
+    - name: Check Git working tree
+      ansible.builtin.command:
+        argv:
+          - git
+          - -C
+          - "{{ project_dir }}"
+          - status
+          - --porcelain
+      register: git_status
+      delegate_to: localhost
+      become: false
+      changed_when: false
+
+    - name: Require committed changes
+      ansible.builtin.assert:
+        that:
+          - git_status.stdout | length == 0
+        fail_msg: "Commit or discard local changes before deployment."
+
+    - name: Build tagged FastAPI image
       community.docker.docker_image:
-        name: fastapi-homelab
-        tag: "1.0"
+        name: "{{ image_name }}"
+        tag: "{{ image_tag }}"
         source: build
         build:
           path: "{{ project_dir }}"
       delegate_to: localhost
       become: false
 
-    - name: Save image on Ansible control machine
+    - name: Save tagged image
       ansible.builtin.command:
-        cmd: docker save -o /tmp/fastapi-homelab.tar {{ image_name }}
+        argv:
+          - docker
+          - save
+          - -o
+          - "{{ image_archive }}"
+          - "{{ image_name }}:{{ image_tag }}"
       delegate_to: localhost
       become: false
       changed_when: true
 
     - name: Copy image archive to server
       ansible.builtin.copy:
-        src: /tmp/fastapi-homelab.tar
+        src: "{{ image_archive }}"
         dest: "{{ image_archive }}"
         mode: "0644"
 
     - name: Import image into MicroK8s
       ansible.builtin.command:
-        cmd: microk8s ctr image import {{ image_archive }}
-      register: image_import
+        argv:
+          - microk8s
+          - ctr
+          - image
+          - import
+          - "{{ image_archive }}"
       changed_when: true
+
+    - name: Render Kubernetes manifest
+      ansible.builtin.template:
+        src: "{{ project_dir }}/k8s/deployment.yaml"
+        dest: "{{ rendered_manifest }}"
+        mode: "0644"
 
     - name: Apply Kubernetes manifest
       ansible.builtin.command:
-        cmd: microk8s kubectl apply -f {{ project_dir }}/k8s/deployment.yaml
+        argv:
+          - microk8s
+          - kubectl
+          - apply
+          - -f
+          - "{{ rendered_manifest }}"
       register: apply_result
-      changed_when: "'configured' in apply_result.stdout or 'created' in apply_result.stdout"
+      changed_when: >-
+        'created' in apply_result.stdout or
+        'configured' in apply_result.stdout
 
-    - name: Wait for FastAPI rollout
+    - name: Wait for deployment rollout
       ansible.builtin.command:
-        cmd: microk8s kubectl rollout status deployment/fastapi-homelab --timeout=120s
+        argv:
+          - microk8s
+          - kubectl
+          - rollout
+          - status
+          - deployment/fastapi-homelab
+          - --timeout=120s
       changed_when: false
 
     - name: Check FastAPI health endpoint
       ansible.builtin.uri:
-        url: http://127.0.0.1:30080/health
+        url: "http://{{ hostvars[inventory_hostname].ansible_host | default(inventory_hostname) }}:30080/health"
         return_content: true
       delegate_to: localhost
       become: false
