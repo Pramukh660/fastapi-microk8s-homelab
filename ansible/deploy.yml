@@ -1,3 +1,4 @@
+
 ---
 - name: Deploy FastAPI to MicroK8s
   hosts: microk8s_servers
@@ -86,7 +87,27 @@
           - images
           - import
           - "{{ image_archive }}"
+      register: import_result
+      retries: 3
+      delay: 5
+      until: import_result.rc == 0
       changed_when: true
+
+    - name: Verify image exists in MicroK8s
+      ansible.builtin.command:
+        argv:
+          - microk8s
+          - ctr
+          - images
+          - list
+      register: image_list
+      changed_when: false
+      failed_when: image_name not in image_list.stdout
+
+    - name: Remove temporary image archive
+      ansible.builtin.file:
+        path: "{{ image_archive }}"
+        state: absent
 
     - name: Render Kubernetes manifest
       ansible.builtin.shell:
@@ -133,10 +154,7 @@
       ansible.builtin.debug:
         msg: "FastAPI deployed from Git commit {{ image_tag }}"
 
-    - name: Remove temporary files
+    - name: Remove rendered manifest
       ansible.builtin.file:
-        path: "{{ item }}"
+        path: "{{ rendered_manifest }}"
         state: absent
-      loop:
-        - "{{ image_archive }}"
-        - "{{ rendered_manifest }}"
