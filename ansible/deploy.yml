@@ -1,4 +1,3 @@
-
 ---
 - name: Deploy FastAPI to MicroK8s
   hosts: microk8s_servers
@@ -6,75 +5,98 @@
   become: true
 
   vars:
-    project_dir: "{{ playbook_dir }}/.."
-    image_name: fastapi-homelab
-    image_tag: "{{ lookup('pipe', 'git -C ' ~ (playbook_dir ~ '/..') ~ ' rev-parse --short=7 HEAD') }}"
-    image_archive: "/tmp/{{ image_name }}-{{ image_tag }}.tar"
-    rendered_manifest: /tmp/fastapi-deployment.yaml
+    repo_url: "https://github.com/Pramukh660/fastapi-microk8s-homelab.git"
+    repo_branch: "main"
+
+    project_dir: "/opt/fastapi-microk8s-homelab"
+
+    image_name: "fastapi-homelab"
+    image_archive: "/tmp/{{ image_name }}.tar"
+    rendered_manifest: "/tmp/fastapi-deployment.yaml"
 
   tasks:
-    - name: Check Git working tree
+
+    - name: Install required packages
+      ansible.builtin.apt:
+        name:
+          - git
+          - buildah
+        state: present
+        update_cache: true
+
+    - name: Check MicroK8s is ready
+      ansible.builtin.command:
+        argv:
+          - microk8s
+          - status
+          - --wait-ready
+      changed_when: false
+
+    - name: Clone or update GitHub repository
+      ansible.builtin.git:
+        repo: "{{ repo_url }}"
+        dest: "{{ project_dir }}"
+        version: "{{ repo_branch }}"
+        force: true
+        update: true
+        depth: 1
+
+    - name: Get Git commit SHA
       ansible.builtin.command:
         argv:
           - git
           - -C
           - "{{ project_dir }}"
-          - status
-          - --porcelain
-      register: git_status
-      delegate_to: localhost
-      become: false
+          - rev-parse
+          - --short=7
+          - HEAD
+      register: git_commit
       changed_when: false
 
-    - name: Require committed changes
-      ansible.builtin.assert:
-        that:
-          - git_status.stdout | length == 0
-        fail_msg: "Commit or discard local changes before deployment."
+    - name: Set image tag
+      ansible.builtin.set_fact:
+        image_tag: "{{ git_commit.stdout }}"
 
-    - name: Build tagged FastAPI image
-      community.docker.docker_image:
-        name: "{{ image_name }}"
-        tag: "{{ image_tag }}"
-        source: build
-        build:
-          path: "{{ project_dir }}"
-      delegate_to: localhost
-      become: false
-
-    - name: Save tagged image
+    - name: Build FastAPI image with Buildah
       ansible.builtin.command:
         argv:
+          - buildah
+          - bud
+          - --format
           - docker
-          - save
-          - -o
-          - "{{ image_archive }}"
+          - -t
           - "{{ image_name }}:{{ image_tag }}"
-      delegate_to: localhost
-      become: false
+          - "{{ project_dir }}"
       changed_when: true
 
-    - name: Copy image archive to server
-      ansible.builtin.copy:
-        src: "{{ image_archive }}"
-        dest: "{{ image_archive }}"
-        mode: "0644"
+    - name: Export image to Docker archive
+      ansible.builtin.command:
+        argv:
+          - buildah
+          - push
+          - "{{ image_name }}:{{ image_tag }}"
+          - "docker-archive:{{ image_archive }}:{{ image_name }}:{{ image_tag }}"
+      changed_when: true
 
-    - name: Import image into MicroK8s
+    - name: Import image into MicroK8s containerd
       ansible.builtin.command:
         argv:
           - microk8s
           - ctr
-          - image
+          - images
           - import
           - "{{ image_archive }}"
       changed_when: true
 
     - name: Render Kubernetes manifest
-      ansible.builtin.template:
-        src: "{{ project_dir }}/k8s/deployment.yaml"
-        dest: "{{ rendered_manifest }}"
-        mode: "0644"
+      ansible.builtin.shell:
+        cmd: |
+          sed \
+            -e 's/{{ "{{" }} image_name {{ "}}" }}/{{ image_name }}/g' \
+            -e 's/{{ "{{" }} image_tag {{ "}}" }}/{{ image_tag }}/g' \
+            "{{ project_dir }}/k8s/deployment.yaml" \
+            > "{{ rendered_manifest }}"
+      changed_when: true
 
     - name: Apply Kubernetes manifest
       ansible.builtin.command:
@@ -106,3 +128,15 @@
         return_content: true
       delegate_to: localhost
       become: false
+
+    - name: Show deployed commit
+      ansible.builtin.debug:
+        msg: "FastAPI deployed from Git commit {{ image_tag }}"
+
+    - name: Remove temporary files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ image_archive }}"
+        - "{{ rendered_manifest }}"
