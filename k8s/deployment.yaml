@@ -14,8 +14,8 @@ spec:
     spec:
       containers:
         - name: fastapi
-          image: "{{ image_name }}:{{ image_tag }}"
-          imagePullPolicy: Never
+          image: ghcr.io/pramukh660/fastapi-microk8s-homelab:{{ image_tag }}
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8000
           readinessProbe:
@@ -37,4 +37,3 @@ spec:
     - port: 8000
       targetPort: 8000
       nodePort: 30080
-

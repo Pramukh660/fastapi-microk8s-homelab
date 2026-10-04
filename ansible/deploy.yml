@@ -1,143 +1,38 @@
-
 ---
-- name: Deploy FastAPI to MicroK8s
+- name: Deploy FastAPI from GHCR to MicroK8s
   hosts: microk8s_servers
   gather_facts: false
   become: true
 
   vars:
-    repo_url: "https://github.com/Pramukh660/fastapi-microk8s-homelab.git"
-    repo_branch: "main"
-
-    project_dir: "/opt/fastapi-microk8s-homelab"
-
-    image_name: "fastapi-homelab"
-    image_archive: "/tmp/{{ image_name }}.tar"
-    rendered_manifest: "/tmp/fastapi-deployment.yaml"
+    rendered_manifest: /tmp/fastapi-deployment.yaml
 
   tasks:
-
-    - name: Install required packages
-      ansible.builtin.apt:
-        name:
-          - git
-          - buildah
-        state: present
-        update_cache: true
+    - name: Require a Git SHA image tag
+      ansible.builtin.assert:
+        that:
+          - image_tag is defined
+          - image_tag is match('^[0-9a-f]{7,40}$')
+        fail_msg: "Pass the SHA tag published by GitHub Actions, e.g. -e image_tag=abcdef1."
 
     - name: Check MicroK8s is ready
       ansible.builtin.command:
-        argv:
-          - microk8s
-          - status
-          - --wait-ready
+        argv: [microk8s, status, --wait-ready]
       changed_when: false
 
-    - name: Clone or update GitHub repository
-      ansible.builtin.git:
-        repo: "{{ repo_url }}"
-        dest: "{{ project_dir }}"
-        version: "{{ repo_branch }}"
-        force: true
-        update: true
-        depth: 1
-
-    - name: Get Git commit SHA
-      ansible.builtin.command:
-        argv:
-          - git
-          - -C
-          - "{{ project_dir }}"
-          - rev-parse
-          - --short=7
-          - HEAD
-      register: git_commit
-      changed_when: false
-
-    - name: Set image tag
-      ansible.builtin.set_fact:
-        image_tag: "{{ git_commit.stdout }}"
-
-    - name: Build FastAPI image with Buildah
-      ansible.builtin.command:
-        argv:
-          - buildah
-          - bud
-          - --format
-          - docker
-          - -t
-          - "{{ image_name }}:{{ image_tag }}"
-          - "{{ project_dir }}"
-      changed_when: true
-
-    - name: Remove existing image archive
-      ansible.builtin.file:
-        path: "{{ image_archive }}"
-        state: absent
-
-    - name: Export image to Docker archive
-      ansible.builtin.command:
-        argv:
-          - buildah
-          - push
-          - "{{ image_name }}:{{ image_tag }}"
-          - "docker-archive:{{ image_archive }}:{{ image_name }}:{{ image_tag }}"
-      changed_when: true
-
-    - name: Import image into MicroK8s containerd
-      ansible.builtin.command:
-        argv:
-          - microk8s
-          - ctr
-          - images
-          - import
-          - "{{ image_archive }}"
-      register: import_result
-      retries: 3
-      delay: 5
-      until: import_result.rc == 0
-      changed_when: true
-
-    - name: Verify image exists in MicroK8s
-      ansible.builtin.command:
-        argv:
-          - microk8s
-          - ctr
-          - images
-          - list
-      register: image_list
-      changed_when: false
-      failed_when: image_name not in image_list.stdout
-
-    - name: Remove temporary image archive
-      ansible.builtin.file:
-        path: "{{ image_archive }}"
-        state: absent
-
-    - name: Render Kubernetes manifest
-      ansible.builtin.shell:
-        cmd: |
-          sed \
-            -e 's/{{ "{{" }} image_name {{ "}}" }}/{{ image_name }}/g' \
-            -e 's/{{ "{{" }} image_tag {{ "}}" }}/{{ image_tag }}/g' \
-            "{{ project_dir }}/k8s/deployment.yaml" \
-            > "{{ rendered_manifest }}"
-      changed_when: true
+    - name: Render Kubernetes manifest with selected image tag
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../k8s/deployment.yaml"
+        dest: "{{ rendered_manifest }}"
+        mode: "0644"
 
     - name: Apply Kubernetes manifest
       ansible.builtin.command:
-        argv:
-          - microk8s
-          - kubectl
-          - apply
-          - -f
-          - "{{ rendered_manifest }}"
+        argv: [microk8s, kubectl, apply, -f, "{{ rendered_manifest }}"]
       register: apply_result
-      changed_when: >-
-        'created' in apply_result.stdout or
-        'configured' in apply_result.stdout
+      changed_when: "'created' in apply_result.stdout or 'configured' in apply_result.stdout"
 
-    - name: Wait for deployment rollout
+    - name: Wait for FastAPI deployment rollout
       ansible.builtin.command:
         argv:
           - microk8s
@@ -145,19 +40,36 @@
           - rollout
           - status
           - deployment/fastapi-homelab
-          - --timeout=120s
+          - --timeout=180s
       changed_when: false
 
-    - name: Check FastAPI health endpoint
+    - name: Show deployed Kubernetes image
+      ansible.builtin.command:
+        argv:
+          - microk8s
+          - kubectl
+          - get
+          - deployment
+          - fastapi-homelab
+          - -o
+          - "jsonpath={.spec.template.spec.containers[0].image}"
+      register: deployed_image
+      changed_when: false
+
+    - name: Verify FastAPI health endpoint from control node
       ansible.builtin.uri:
         url: "http://{{ hostvars[inventory_hostname].ansible_host | default(inventory_hostname) }}:30080/health"
         return_content: true
+        status_code: 200
       delegate_to: localhost
       become: false
 
-    - name: Show deployed commit
+    - name: Show deployment result
       ansible.builtin.debug:
-        msg: "FastAPI deployed from Git commit {{ image_tag }}"
+        msg:
+          - "Deployed image: {{ deployed_image.stdout }}"
+          - "Git SHA tag: {{ image_tag }}"
+          - "Health endpoint returned HTTP 200."
 
     - name: Remove rendered manifest
       ansible.builtin.file:

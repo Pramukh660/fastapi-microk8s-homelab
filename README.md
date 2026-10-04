@@ -1,211 +1,75 @@
 # FastAPI MicroK8s Homelab
 
-A hands-on homelab project for deploying a **FastAPI application to MicroK8s using Ansible and GitHub**.
+A homelab DevOps project that builds a FastAPI container image with GitHub Actions, publishes versioned images to GitHub Container Registry (GHCR), and deploys them to MicroK8s using Ansible.
 
-The deployment is fully automated from the Ansible control machine. Ansible connects to the Ubuntu Server over SSH, pulls the latest code directly from GitHub, builds the container image with Buildah, imports it into MicroK8s containerd, and deploys it to Kubernetes.
+Repository: https://github.com/Pramukh660/fastapi-microk8s-homelab
 
 ## Architecture
 
 ```text
-                    GitHub
-                       │
-                       │ git clone / pull
-                       ▼
-              ┌───────────────────┐
-              │   Ubuntu Server   │
-              │     MicroK8s      │
-              └───────────────────┘
-                       ▲
-                       │ SSH
-                       │
-              ┌───────────────────┐
-              │      Ansible      │
-              │   Control Node    │
-              │      (WSL)        │
-              └───────────────────┘
-
-Ubuntu Server:
-    GitHub Repository
-          │
-          ▼
-       Buildah
-          │
-          ▼
- fastapi-homelab:<git-sha>
-          │
-          ▼
- MicroK8s containerd
-          │
-          ▼
- Kubernetes Deployment
-          │
-          ▼
-   NodePort :30080
-          │
-          ▼
- FastAPI Application
+Developer -> git push -> GitHub Repository
+                         |
+                         v
+              GitHub Actions (CI)
+              - Build container image
+              - Tag with short Git SHA
+              - Push image to GHCR
+                         |
+                         v
+              GitHub Container Registry
+                         |
+                  Kubernetes pulls image
+                         v
+Ansible (WSL/Linux) --SSH--> Ubuntu Server / MicroK8s
+                                  |
+                                  v
+                    Kubernetes Deployment -> FastAPI Pod
+                                  |
+                                  v
+                          NodePort :30080
+                                  |
+                                  v
+                           /health check
 ```
 
-## Project Structure
+## Components
 
-```text
-fastapi-microk8s-homelab/
-├── app/
-│   └── main.py
-├── ansible/
-│   ├── deploy.yml
-│   └── inventory.ini
-├── k8s/
-│   └── deployment.yaml
-├── Dockerfile
-├── requirements.txt
-└── .gitignore
-```
+- **FastAPI/Uvicorn**: application and ASGI server.
+- **Dockerfile**: repeatable container build instructions.
+- **GitHub Actions**: builds and publishes an image on pushes to `main`.
+- **GHCR**: stores versioned container images.
+- **Ansible**: deploys a selected image tag to the homelab server.
+- **MicroK8s/Kubernetes**: runs the app and exposes NodePort `30080`.
 
-## Technologies
+Docker is used on the GitHub-hosted runner for image building. Docker Engine is not required on the MicroK8s server. The new flow no longer needs Buildah on the server, image tar archives, or manual `ctr images import`.
 
-* Python
-* FastAPI
-* Uvicorn
-* Ansible
-* GitHub
-* Buildah
-* MicroK8s
-* Kubernetes
-* containerd
-* Ubuntu Server
-* WSL
+## CI: Build and publish
 
-## Application
+Workflow: `.github/workflows/build-and-push.yml`
 
-The FastAPI application runs on port `8000` inside the Kubernetes pod.
+On each push to `main`, GitHub Actions builds the Dockerfile and publishes an image tagged with the short Git commit SHA:
 
-Example endpoints:
+`ghcr.io/pramukh660/fastapi-microk8s-homelab:<7-character-sha>`
 
-```text
-GET /
-GET /health
-```
+The workflow uses `GITHUB_TOKEN` with `packages: write`; no personal access token is required for publishing.
 
-Swagger documentation:
+### GHCR visibility
 
-```text
-/docs
-```
+After the first successful workflow run, open the package in GitHub Packages and set visibility to **Public** if you want MicroK8s to pull without credentials. If the package remains private, configure a Kubernetes `imagePullSecret` before deploying.
 
-## Kubernetes Configuration
+## CD: Deploy with Ansible
 
-The Kubernetes manifest defines both the Deployment and Service.
+Ansible deploys an image already published by CI. It does not clone the application repository on the server, build images, transfer archives, or import images into containerd.
 
-```yaml
-kind: Deployment
-```
+### Prerequisites
 
-The application runs as a single replica:
+- Ansible installed on WSL/Linux.
+- SSH key authentication configured for the Ubuntu Server.
+- MicroK8s installed and running.
+- GHCR package public, or a Kubernetes pull secret configured.
+- `ansible/inventory.ini` present locally and excluded from Git.
 
-```text
-replicas: 1
-```
-
-The Service uses a NodePort:
-
-```text
-Port:     8000
-Target:   8000
-NodePort: 30080
-```
-
-The application can therefore be accessed through:
-
-```text
-http://<server-ip>:30080
-```
-
-Health endpoint:
-
-```text
-http://<server-ip>:30080/health
-```
-
-Swagger UI:
-
-```text
-http://<server-ip>:30080/docs
-```
-
-## Git-Based Image Tagging
-
-Each deployment uses the short Git commit SHA as the container image tag.
-
-Example:
-
-```text
-fastapi-homelab:9ea7f31
-```
-
-This provides a direct relationship between:
-
-```text
-Git commit
-    ↓
-Container image
-    ↓
-Kubernetes deployment
-```
-
-It also makes it easy to identify which source revision is currently deployed.
-
-## Deployment Workflow
-
-The Ansible playbook performs the following steps:
-
-```text
-1. Connect to Ubuntu Server using SSH key
-2. Install Git and Buildah
-3. Verify MicroK8s is ready
-4. Clone/update the GitHub repository
-5. Get the current Git commit SHA
-6. Build the FastAPI image with Buildah
-7. Export the image as a Docker-compatible archive
-8. Import the image into MicroK8s containerd
-9. Render the Kubernetes manifest
-10. Apply the Kubernetes resources
-11. Wait for the deployment rollout
-12. Check the FastAPI health endpoint
-13. Remove temporary files
-```
-
-## Requirements
-
-### Ansible Control Node
-
-Install:
-
-* Ansible
-* SSH
-* Git
-
-The control node can be WSL or another Linux system.
-
-### Ubuntu Server
-
-The server requires:
-
-* Ubuntu Server
-* MicroK8s
-* SSH access
-* Git
-* Buildah
-
-Docker is **not required** on the server.
-
-MicroK8s uses its own containerd runtime.
-
-## SSH Configuration
-
-The Ansible inventory uses SSH key authentication.
-
-Example:
+Example inventory:
 
 ```ini
 [microk8s_servers]
@@ -216,196 +80,55 @@ ansible_ssh_private_key_file=~/.ssh/homelab_ed25519
 ansible_python_interpreter=/usr/bin/python3
 ```
 
-Make sure the corresponding public key is configured in:
+### Deploy
 
-```text
-~/.ssh/authorized_keys
-```
+1. Push the application changes to `main`.
+2. In GitHub, open **Actions** and wait for **Build and Publish FastAPI Image** to succeed.
+3. Get the short SHA of the commit whose workflow succeeded:
 
-on the Ubuntu Server.
+   ```bash
+   git rev-parse --short=7 HEAD
+   ```
 
-## GitHub Repository
+4. From the repository root, run the playbook with that SHA:
 
-The server pulls the application directly from GitHub.
+   ```bash
+   ansible-playbook -i ansible/inventory.ini ansible/deploy.yml --ask-become-pass -e image_tag=abcdef1
+   ```
 
-Example repository:
+   Replace `abcdef1` with the real seven-character SHA.
 
-```text
-https://github.com/Pramukh660/fastapi-microk8s-homelab
-```
+The playbook checks MicroK8s, renders the manifest, applies the Deployment and Service, waits for rollout, prints the deployed image, and checks `/health` from the Ansible control node.
 
-The deployment does **not** copy the application or container image from the Ansible control node.
+## Application endpoints
 
-There is no SCP step in the deployment workflow.
+For a server at `192.168.1.9`:
 
-## Deploy
+- App: http://192.168.1.9:30080/
+- Health: http://192.168.1.9:30080/health
+- Swagger UI: http://192.168.1.9:30080/docs
 
-From the Ansible control node:
+## Kubernetes
 
-```bash
-cd ~/homelab-ansible
-```
+The manifest defines a single-replica Deployment and a NodePort Service. FastAPI listens on port `8000`; the service exposes node port `30080`. The image uses `imagePullPolicy: IfNotPresent`. Use unique SHA tags and treat them as immutable.
 
-Run:
+If a pod reports `ImagePullBackOff`, verify the exact tag exists in GHCR and that the package is public or the Kubernetes pull secret is correct.
 
-```bash
-ansible-playbook \
-  -i ansible/inventory.ini \
-  ansible/deploy.yml \
-  --ask-become-pass
-```
+## Troubleshooting
 
-Ansible will:
+- **Workflow cannot publish to GHCR**: check `packages: write` and the Actions logs.
+- **`ImagePullBackOff`**: check image name/tag and GHCR visibility or pull-secret configuration.
+- **Rollout timeout**: inspect `sudo microk8s kubectl describe pods` and `sudo microk8s kubectl get events --sort-by=.lastTimestamp` on the server.
+- **Health check fails from WSL**: verify NodePort `30080`, server reachability, and `sudo microk8s kubectl get pods,svc`.
 
-```text
-GitHub → Server → Buildah → MicroK8s → FastAPI
-```
+## Previous implementation and lessons
 
-## Verify Deployment
+The first version built images with Buildah on the server, exported a tar archive, and imported it into MicroK8s containerd. Troubleshooting included SSH file-transfer interruptions, sudo privilege-escalation issues, containerd import errors, and Buildah refusing to overwrite an existing Docker archive.
 
-Check Kubernetes resources:
+The GHCR design removes those manual image-transfer steps. CI builds and publishes the image; Ansible handles deployment and verification.
 
-```bash
-sudo microk8s kubectl get pods
-```
+## Future improvements
 
-```bash
-sudo microk8s kubectl get deployment
-```
-
-```bash
-sudo microk8s kubectl get service
-```
-
-Check the image:
-
-```bash
-sudo microk8s ctr images list | grep fastapi-homelab
-```
-
-Check the deployment:
-
-```bash
-sudo microk8s kubectl rollout status deployment/fastapi-homelab
-```
-
-Test the application:
-
-```bash
-curl http://192.168.1.9:30080/health
-```
-
-## Updating the Application
-
-Modify the FastAPI application:
-
-```text
-app/main.py
-```
-
-Commit and push the changes:
-
-```bash
-git add .
-git commit -m "feat: update FastAPI endpoint"
-git push
-```
-
-Then run the Ansible deployment again:
-
-```bash
-ansible-playbook \
-  -i ansible/inventory.ini \
-  ansible/deploy.yml \
-  --ask-become-pass
-```
-
-Ansible pulls the new GitHub commit and builds a new image tagged with the new commit SHA.
-
-## Container Image Strategy
-
-The project contains a `Dockerfile`, but the server does not require Docker.
-
-Buildah is used to build the image:
-
-```bash
-buildah bud
-```
-
-The resulting image is exported to an archive and imported into MicroK8s:
-
-```bash
-microk8s ctr images import
-```
-
-The Kubernetes Deployment uses:
-
-```yaml
-imagePullPolicy: Never
-```
-
-because the image is loaded directly into the MicroK8s containerd instance rather than pulled from a registry.
-
-## Health Checks
-
-The Kubernetes Deployment includes a readiness probe:
-
-```yaml
-readinessProbe:
-  httpGet:
-    path: /health
-    port: 8000
-```
-
-This allows Kubernetes to determine when the FastAPI application is ready to receive traffic.
-
-## Why This Setup?
-
-This project is designed as a practical homelab implementation of a small CI/CD-style deployment workflow.
-
-It demonstrates:
-
-```text
-Git
- ↓
-Configuration Management
- ↓
-Container Build
- ↓
-Container Runtime
- ↓
-Kubernetes Deployment
- ↓
-Application Health Check
-```
-
-It also provides experience with:
-
-* Infrastructure automation using Ansible
-* SSH-based administration
-* Git-driven deployments
-* Container image lifecycle
-* Kubernetes networking
-* MicroK8s
-* containerd
-* FastAPI deployment
-* Reproducible application releases
-
-## Future Improvements
-
-Possible next steps include:
-
-* GitHub Actions for automated deployment
-* Private container registry
-* Kubernetes Ingress
-* TLS/HTTPS
-* ConfigMaps and Secrets
-* Persistent storage
-* Horizontal scaling
-* Monitoring and logging
-* Automatic rollback
-* Ansible role-based structure
-
-## License
-
-This project is intended primarily for learning, experimentation, and homelab use.
+- Trigger CD automatically after successful image publishing.
+- Add Ingress and TLS.
+- Add monitoring, logging, and automated rollback.
