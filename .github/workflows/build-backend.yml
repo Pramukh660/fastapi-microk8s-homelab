@@ -3,7 +3,6 @@ name: Build and Publish FastAPI Image
 on:
   push:
     branches: [main]
-    paths: [homelab-backend/**, .github/workflows/build-backend.yml]
   workflow_dispatch:
 
 permissions:
@@ -35,6 +34,7 @@ jobs:
           images: ${{ env.IMAGE_NAME }}
           tags: |
             type=sha,format=short,prefix=
+            type=raw,value=latest
       - name: Build and push image
         uses: docker/build-push-action@v6
         with:
