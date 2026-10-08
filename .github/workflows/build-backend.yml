@@ -3,6 +3,7 @@ name: Build and Publish FastAPI Image
 on:
   push:
     branches: [main]
+    paths: [homelab-backend/**, .github/workflows/build-backend.yml]
   workflow_dispatch:
 
 permissions:
@@ -37,8 +38,8 @@ jobs:
       - name: Build and push image
         uses: docker/build-push-action@v6
         with:
-          context: .
-          file: ./Dockerfile
+          context: ./homelab-backend
+          file: ./homelab-backend/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

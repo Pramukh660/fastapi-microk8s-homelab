@@ -3,7 +3,7 @@ name: Build and Publish Frontend Image
 on:
   push:
     branches: [main]
-    paths: [frontend/**]
+    paths: [homelab-frontend/**, .github/workflows/build-frontend.yml]
   workflow_dispatch:
 
 permissions:
@@ -32,7 +32,7 @@ jobs:
             type=sha,format=short,prefix=
       - uses: docker/build-push-action@v6
         with:
-          context: ./frontend
+          context: ./homelab-frontend
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
