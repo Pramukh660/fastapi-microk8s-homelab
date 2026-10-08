@@ -7,4 +7,4 @@ resources:
   - ingress.yaml
 images:
   - name: ghcr.io/pramukh660/fastapi-microk8s-homelab
-    newTag: latest   # set to the CI short SHA
+    newTag: "${IMAGE_TAG}"

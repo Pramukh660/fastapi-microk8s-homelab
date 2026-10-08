@@ -7,7 +7,7 @@ resources:
   - ingress.yaml
 images:
   - name: ghcr.io/pramukh660/homelab-frontend
-    newTag: latest   # set to the CI short SHA
+    newTag: "${IMAGE_TAG}"
 patches:
   - target: {kind: Deployment, name: frontend}
     patch: |-
