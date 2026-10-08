@@ -25,7 +25,7 @@ git push -> GitHub Actions -> GHCR (images tagged with short SHA)
                                    v
         deploy.sh <env> <sha>  ->  kustomize overlay  ->  namespace dev | stg | prod
                                                               |
-                                                       nginx ingress
+                                                       Traefik ingress
                                                         /          \
                                           <env>.example.com    api.<env>.example.com
                                              (frontend)             (backend)
@@ -37,7 +37,7 @@ git push -> GitHub Actions -> GHCR (images tagged with short SHA)
 | stg  | stg.example.com  | api.stg.example.com  |
 | prod | example.com      | api.example.com      |
 
-The frontend image reads `API_URL` at container start, so one image serves every environment. The backend ingress allows CORS from the matching frontend host.
+The frontend image reads `API_URL` at container start, so one image serves every environment. CORS is handled at the ingress: each backend overlay defines a Traefik `Middleware` (`cors`) that allows only the matching frontend host, so the backend code needs no CORS handling. The `nginx.ingress.kubernetes.io/*` annotations do not work here because the controller is Traefik.
 
 ## Images
 
@@ -50,7 +50,7 @@ Each workflow runs on pushes to `main` that touch its own folder, and tags the i
 
 ## Prerequisites
 
-- MicroK8s running on the server, with the `ingress` addon enabled.
+- MicroK8s running on the server, with the `ingress` addon enabled. In current MicroK8s this addon installs **Traefik** (the `public`, `nginx` and `traefik` ingress classes all map to it), not ingress-nginx.
 - Both GHCR packages set to **Public** (otherwise add a Kubernetes `imagePullSecret`).
 - `envsubst`, provided by the `gettext-base` package on Ubuntu.
 - Hosts entries on your client machine (no real domain is used locally).
@@ -114,6 +114,9 @@ curl -H "Host: dev.example.com" http://localhost/
 
 - **`ImagePullBackOff`**: the tag doesn't exist yet, or the GHCR package is private. Run `microk8s kubectl describe pod -n dev`.
 - **`envsubst: command not found`**: install `gettext-base`.
-- **nginx 404**: the hosts entry points at the wrong IP, the `Host` header doesn't match, or the ingress addon isn't running.
+- **404 from the ingress**: the hosts entry points at the wrong IP, the `Host` header doesn't match, or the ingress addon isn't running.
 - **Page shows "unreachable"**: the backend pod isn't ready, or CORS is blocking the call. Check the browser console.
+- **CORS error in the browser**: check that the middleware exists (`microk8s kubectl get middleware -n dev`) and that the response carries the header:
+  `curl -si -H "Origin: http://dev.example.com" -H "Host: api.dev.example.com" http://localhost/health | grep -i access-control`.
+  The middleware uses the `traefik.io/v1alpha1` API; on Traefik v2 change it to `traefik.containo.us/v1alpha1`.
 - **`permission denied` from `microk8s`**: run with `sudo`, or add your user to the `microk8s` group.

@@ -4,6 +4,7 @@ namespace: stg
 resources:
   - namespace.yaml
   - ../../base
+  - middleware.yaml
   - ingress.yaml
 images:
   - name: ghcr.io/pramukh660/fastapi-microk8s-homelab

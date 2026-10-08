@@ -3,8 +3,7 @@ kind: Ingress
 metadata:
   name: api
   annotations:
-    nginx.ingress.kubernetes.io/enable-cors: "true"
-    nginx.ingress.kubernetes.io/cors-allow-origin: "http://stg.example.com"
+    traefik.ingress.kubernetes.io/router.middlewares: stg-cors@kubernetescrd
 spec:
   ingressClassName: public
   rules:
