@@ -7,4 +7,6 @@
 __pycache__/
 .venv/
 venv/
-ansible/inventory.ini
+homelab-backend/ansible/inventory.ini
+*:Zone.Identifier
+node_modules/

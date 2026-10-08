@@ -1,39 +1,32 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: fastapi-homelab
+  name: backend
 spec:
   replicas: 1
   selector:
-    matchLabels:
-      app: fastapi-homelab
+    matchLabels: {app: backend}
   template:
     metadata:
-      labels:
-        app: fastapi-homelab
+      labels: {app: backend}
     spec:
       containers:
-        - name: fastapi
-          image: ghcr.io/pramukh660/fastapi-microk8s-homelab:{{ image_tag }}
+        - name: backend
+          image: ghcr.io/pramukh660/fastapi-microk8s-homelab
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8000
           readinessProbe:
-            httpGet:
-              path: /health
-              port: 8000
+            httpGet: {path: /health, port: 8000}
             initialDelaySeconds: 3
             periodSeconds: 5
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: fastapi-homelab
+  name: backend
 spec:
-  type: NodePort
-  selector:
-    app: fastapi-homelab
+  selector: {app: backend}
   ports:
     - port: 8000
       targetPort: 8000
-      nodePort: 30080

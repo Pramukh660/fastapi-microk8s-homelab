@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Homelab Frontend</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; }
+    button { font-size: 1rem; padding: .4rem .7rem; }
+    pre { background: #f4f4f4; padding: .8rem; border-radius: 6px; overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <h1>Homelab Frontend</h1>
+  <p>API: <code id="api"></code> — <span id="status">checking…</span></p>
+  <button id="rootBtn">GET /</button>
+  <button id="healthBtn">GET /health</button>
+  <pre id="out">—</pre>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
